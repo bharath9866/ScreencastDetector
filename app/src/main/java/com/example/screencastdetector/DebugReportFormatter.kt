@@ -6,6 +6,14 @@ import android.os.Build
 
 /** Builds the monospace debug panel shown in [MainActivity]. */
 internal object DebugReportFormatter {
+    private val CONFERENCING_DEBUG_PACKAGES = listOf(
+        "com.google.android.apps.meetings",
+        "com.google.android.apps.tachyon",
+        "com.google.meet",
+        "com.google.android.googlequicksearchbox",
+        "com.google.android.apps.bard",
+    )
+
     fun format(context: Context, result: ScreencastProbe.ProbeResult): String {
         val display = result.display
         val hiddenDisplay = result.hiddenDisplay
@@ -24,6 +32,7 @@ internal object DebugReportFormatter {
             appendMediaRouterSection(mediaRouter)
             appendRecordingSection(recording)
             appendHeuristicBreakdown(breakdown)
+            appendCaptureConfirmation(context)
             appendCombinedSection(result)
         }
     }
@@ -68,10 +77,11 @@ internal object DebugReportFormatter {
     private fun StringBuilder.appendNotificationListenerSection(
         notificationListener: CastNotificationListener.DebugState,
     ) {
-        appendLine("--- Notification listener (GlideX) ---")
+        appendLine("--- Notification listener (GlideX / Meet / Gemini) ---")
         appendLine("accessEnabled: ${notificationListener.accessEnabled}")
         appendLine("serviceConnected: ${notificationListener.serviceConnected}")
         appendLine("activeMirroringNotifications: ${notificationListener.activeMirroringNotifications}")
+        appendLine("activeSources: ${joinOrNone(notificationListener.activeSources)}")
         appendLine("mirroringActive: ${notificationListener.mirroringActive}")
         appendLine()
     }
@@ -124,6 +134,25 @@ internal object DebugReportFormatter {
         appendLine("processMatch: ${breakdown.processMatch}")
         appendLine("serviceMatch: ${breakdown.serviceMatch}")
         appendLine("keywordProcessMatch: ${breakdown.keywordProcessMatch}")
+        appendLine()
+    }
+
+    private fun StringBuilder.appendCaptureConfirmation(context: Context) {
+        appendLine("--- Capture confirmation ---")
+        for (packageName in CONFERENCING_DEBUG_PACKAGES) {
+            if (!MirroringPackageRegistry.isMirroringPackageInstalled(context, packageName)) continue
+            appendLine(
+                "$packageName projectMediaActive: " +
+                    CaptureConfirmation.isProjectMediaOpActive(context, packageName),
+            )
+            appendLine(
+                "$packageName mediaProjectionActive: " +
+                    CaptureConfirmation.hasActiveMediaProjectionForPackage(context, packageName),
+            )
+        }
+        appendLine(
+            "anyMediaProjectionActive: ${CaptureConfirmation.hasAnyActiveMediaProjection(context)}",
+        )
         appendLine()
     }
 

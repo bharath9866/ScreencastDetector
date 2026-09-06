@@ -18,6 +18,10 @@ object MirroringPackageRegistry {
         "com.samsung.android.smartmirroring",
         "com.samsung.android.galaxycontinuity",
         "com.google.android.apps.meetings",
+        "com.google.android.apps.tachyon",
+        "com.google.meet",
+        "com.google.android.googlequicksearchbox",
+        "com.google.android.apps.bard",
         "us.zoom.videomeetings",
         "com.microsoft.teams",
         "com.microsoft.appmanager",
@@ -50,7 +54,22 @@ object MirroringPackageRegistry {
     @Volatile
     private var cachedDiscoveredPackages: List<String>? = null
 
+    /** Packages where overlay + foreground AppOps indicate capture (GlideX OEM workaround). */
+    private val OVERLAY_CAPTURE_HEURISTIC_PACKAGES = setOf(
+        "com.asus.glidex",
+        "com.asus.glide",
+        "com.asus.pccontrol",
+        "com.asus.linkmaster",
+    )
+
     fun projectionHostPackages(): List<String> = PROJECTION_HOST_PACKAGES
+
+    fun supportsOverlayCaptureHeuristic(packageName: String): Boolean {
+        if (packageName in OVERLAY_CAPTURE_HEURISTIC_PACKAGES) return true
+        val lower = packageName.lowercase()
+        return lower.contains("asus") &&
+            PACKAGE_KEYWORDS.any { keyword -> lower.contains(keyword) }
+    }
 
     fun mirroringAppPackages(context: Context): List<String> {
         return (STATIC_MIRRORING_PACKAGES + discoverMirroringPackages(context))

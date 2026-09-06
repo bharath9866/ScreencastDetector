@@ -32,7 +32,8 @@ object MediaRouterCastDetector {
             val looksLikeCastRoute = routeName.contains("cast") ||
                 routeName.contains("mirror") ||
                 routeName.contains("glide") ||
-                routeName.contains("display")
+                routeName.contains("screencast") ||
+                routeName.contains("screen share")
             val castActive = !isDefault &&
                 playbackType == MediaRouter.RouteInfo.PLAYBACK_TYPE_REMOTE &&
                 routes.size > 1 &&

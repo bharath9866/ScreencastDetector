@@ -4,5 +4,5 @@
     <string name="status_not_detected">NOT DETECTED</string>
     <string name="refresh_now">Refresh Now</string>
     <string name="enable_notification_access">Enable Notification Access</string>
-    <string name="notification_access_required">Notification access required for GlideX detection on Android 10</string>
+    <string name="notification_access_required">Notification access required for GlideX, Meet, and Gemini Live screen sharing detection</string>
 </resources>

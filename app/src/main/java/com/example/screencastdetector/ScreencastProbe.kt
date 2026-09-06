@@ -2,15 +2,14 @@ package com.example.screencastdetector
 
 import android.app.Activity
 import android.content.Context
+import android.util.Log
 
 /**
  * Facade that runs all screencast detectors and returns a single combined result.
- *
- * Detectors fall into two groups:
- * - **Monitored** — [DisplayCastDetector] and [ScreenRecordingDetector] register listeners/poll loops.
- * - **On-demand** — probed fresh on each [probe] call.
  */
 object ScreencastProbe {
+    private const val LOG_TAG = "ScreencastDetector"
+
     data class ProbeResult(
         val detected: Boolean,
         val reason: String?,
@@ -27,13 +26,17 @@ object ScreencastProbe {
 
         val display = DisplayCastDetector.getDebugState(context)
         val hiddenDisplay = HiddenDisplayDetector.probe(context)
-        val mediaProjectionService = MediaProjectionServiceProbe.probe(context)
+        val mediaProjectionService = CaptureConfirmation.gateMediaProjectionService(
+            context,
+            MediaProjectionServiceProbe.probe(context),
+        )
         val notificationListener = CastNotificationListener.getDebugState(context)
         val recording = ScreenRecordingDetector.getDebugState(context)
         val mediaRouter = MediaRouterCastDetector.probe(context)
 
+        val hiddenDisplayActive = CaptureConfirmation.isHiddenDisplayThreat(context, hiddenDisplay)
         val screenSharingActive = recording.screenRecordingActive ||
-            hiddenDisplay.hiddenVirtualDisplayActive ||
+            hiddenDisplayActive ||
             mediaProjectionService.active ||
             notificationListener.mirroringActive ||
             mediaRouter.castRouteActive
@@ -41,6 +44,7 @@ object ScreencastProbe {
         val reason = resolveReason(
             notificationListener = notificationListener,
             mediaProjectionService = mediaProjectionService,
+            hiddenDisplayActive = hiddenDisplayActive,
             hiddenDisplay = hiddenDisplay,
             display = display,
             recording = recording,
@@ -50,6 +54,17 @@ object ScreencastProbe {
         val detected = display.externalDisplayActive ||
             display.virtualDisplayActive ||
             screenSharingActive
+
+        logProbeSummary(
+            detected = detected,
+            reason = reason,
+            display = display,
+            hiddenDisplayActive = hiddenDisplayActive,
+            mediaProjectionService = mediaProjectionService,
+            notificationListener = notificationListener,
+            recording = recording,
+            mediaRouter = mediaRouter,
+        )
 
         return ProbeResult(
             detected = detected,
@@ -82,18 +97,42 @@ object ScreencastProbe {
         ScreenRecordingDetector.refreshState(context)
     }
 
+    private fun logProbeSummary(
+        detected: Boolean,
+        reason: String?,
+        display: DisplayCastDetector.DebugState,
+        hiddenDisplayActive: Boolean,
+        mediaProjectionService: MediaProjectionServiceProbe.DebugState,
+        notificationListener: CastNotificationListener.DebugState,
+        recording: ScreenRecordingDetector.DebugState,
+        mediaRouter: MediaRouterCastDetector.DebugState,
+    ) {
+        Log.i(
+            LOG_TAG,
+            "Probe detected=$detected reason=${reason ?: "(none)"} " +
+                "displayExt=${display.externalDisplayActive} displayVirt=${display.virtualDisplayActive} " +
+                "hidden=$hiddenDisplayActive mediaProj=${mediaProjectionService.active} " +
+                "notification=${notificationListener.mirroringActive} " +
+                "recording=${recording.screenRecordingActive} trigger=${recording.detectionTrigger} " +
+                "mediaRouter=${mediaRouter.castRouteActive}",
+        )
+    }
+
     private fun resolveReason(
         notificationListener: CastNotificationListener.DebugState,
         mediaProjectionService: MediaProjectionServiceProbe.DebugState,
+        hiddenDisplayActive: Boolean,
         hiddenDisplay: HiddenDisplayDetector.DebugState,
         display: DisplayCastDetector.DebugState,
         recording: ScreenRecordingDetector.DebugState,
         mediaRouter: MediaRouterCastDetector.DebugState,
     ): String? = when {
-        notificationListener.mirroringActive -> "GlideX mirroring notification"
+        notificationListener.mirroringActive -> formatNotificationReason(notificationListener)
+        mediaProjectionService.active && GeminiLivePackages.isGeminiPackage(mediaProjectionService.activePackage) ->
+            "Gemini Live screen sharing (MediaProjection)"
         mediaProjectionService.active ->
             "MediaProjection service (${mediaProjectionService.activePackage})"
-        hiddenDisplay.hiddenVirtualDisplayActive -> formatHiddenDisplayReason(hiddenDisplay)
+        hiddenDisplayActive -> formatHiddenDisplayReason(hiddenDisplay)
         display.externalDisplayActive -> "External display"
         display.virtualDisplayActive -> "Virtual display"
         recording.screenRecordingActive -> formatRecordingReason(recording)
@@ -101,7 +140,21 @@ object ScreencastProbe {
         else -> null
     }
 
+    private fun formatNotificationReason(
+        notificationListener: CastNotificationListener.DebugState,
+    ): String {
+        return when {
+            "gemini" in notificationListener.activeSources -> "Gemini Live screen sharing"
+            "meet" in notificationListener.activeSources -> "Meet screen sharing"
+            "glidex" in notificationListener.activeSources -> "GlideX mirroring"
+            else -> "Screen sharing notification"
+        }
+    }
+
     private fun formatHiddenDisplayReason(hiddenDisplay: HiddenDisplayDetector.DebugState): String {
+        if (CaptureConfirmation.isGeminiScreenSharingDisplayThreat(hiddenDisplay)) {
+            return "Gemini Live virtual display (ScreenRecorder)"
+        }
         val owner = hiddenDisplay.virtualDisplayOwners.firstOrNull()
         return if (owner != null) "Private virtual display ($owner)" else "Private virtual display"
     }

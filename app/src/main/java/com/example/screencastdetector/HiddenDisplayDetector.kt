@@ -160,6 +160,9 @@ object HiddenDisplayDetector {
 
     private fun parseOwnerFromDisplayName(name: String?): String? {
         if (name?.contains("GlideX", ignoreCase = true) == true) return "com.asus.glidex"
+        if (name?.contains("ScreenRecorder", ignoreCase = true) == true) {
+            return "com.google.android.googlequicksearchbox"
+        }
         return null
     }
 

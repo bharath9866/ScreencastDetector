@@ -35,13 +35,10 @@ object ScreenRecordingDetector {
     )
 
     private val MIRRORING_SERVICE_KEYWORDS = listOf(
-        "projection",
-        "mirror",
-        "capture",
-        "display",
-        "cast",
-        "share",
-        "glide",
+        "mediaprojection",
+        "screencapture",
+        "screenrecord",
+        "virtualdisplay",
     )
 
     data class HeuristicBreakdown(
@@ -415,12 +412,19 @@ object ScreenRecordingDetector {
         val mirroringApps = MirroringPackageRegistry.mirroringAppPackages(context)
         lastDiscoveredMirroringPackages = MirroringPackageRegistry.discoverMirroringPackages(context)
 
-        val runningPackages = findRunningPackagesForOp(context, AppOpsOps.PROJECT_MEDIA)
+        val runningPackages = CaptureConfirmation.filterProjectMediaPackages(
+            context,
+            findRunningPackagesForOp(context, AppOpsOps.PROJECT_MEDIA),
+        )
         lastRunningProjectMediaPackages = runningPackages
 
         val allOverlayPackages = findRunningPackagesForOp(context, AppOpsOps.SYSTEM_ALERT_WINDOW)
         val overlayPackages = allOverlayPackages.filter { mirroringApps.contains(it) }
         lastRunningMirroringOverlayPackages = overlayPackages
+
+        val oemOverlayPackages = overlayPackages.filter { packageName ->
+            MirroringPackageRegistry.supportsOverlayCaptureHeuristic(packageName)
+        }
 
         val dynamicOverlayPackages = allOverlayPackages.filter { packageName ->
             MirroringPackageRegistry.looksLikeMirroringPackage(packageName) &&
@@ -442,17 +446,21 @@ object ScreenRecordingDetector {
         val appOpsProbe = AppOpsPackageProbe.probe(context, mirroringApps)
         lastAppOpsProbe = appOpsProbe
 
-        val anyActiveProjectMedia = runningPackages.isNotEmpty() || appOpsProbe.activeMirroringCapture
+        val appOpsCaptureActive = appOpsProbe.activeMirroringCapture &&
+            (appOpsProbe.activePackage == null ||
+                CaptureConfirmation.isLiveCaptureForPackage(context, appOpsProbe.activePackage))
+
+        val anyActiveProjectMedia = runningPackages.isNotEmpty() || appOpsCaptureActive
         val visibleProcessProjection = detectActiveProjectMediaInVisibleProcesses(context)
         val projectionActive = detectKnownMirroringProjection(context, mirroringApps)
         val systemUiProjection = detectSystemUiProjection(context)
         val mirroringAppOpsActive = detectKnownMirroringViaActiveAppOps(
             context,
-            overlayPackages + dynamicOverlayPackages + asusOverlayPackages,
+            oemOverlayPackages,
             mirroringApps,
         )
         val mediaProjectionActive = mediaProjectionPackage != null
-        val mirroringPackageActiveOps = activeMirroringPackageOps != null || appOpsProbe.activeMirroringCapture
+        val mirroringPackageActiveOps = activeMirroringPackageOps != null || appOpsCaptureActive
         val captureServiceMatch = detectActiveCaptureServices(context, mirroringApps)
         val processMatch = detectMirroringProcess(context)
         val serviceMatch = detectMirroringServices(context)
@@ -461,7 +469,7 @@ object ScreenRecordingDetector {
 
         val breakdown = HeuristicBreakdown(
             projectMediaRunning = anyActiveProjectMedia,
-            overlayRunning = overlayPackages.isNotEmpty(),
+            overlayRunning = oemOverlayPackages.isNotEmpty(),
             dynamicAsusOverlay = dynamicOverlayPackages.isNotEmpty(),
             asusOverlayRunning = asusOverlayPackages.isNotEmpty(),
             mediaProjectionInfo = mediaProjectionActive,
@@ -477,22 +485,23 @@ object ScreenRecordingDetector {
         )
         lastHeuristicBreakdown = breakdown
 
+        // Only fire on capture-specific signals. Weak "app is running" heuristics caused
+        // false positives when Meet/Zoom calls stay open after screen share ends.
         val trigger = when {
-            appOpsProbe.activeMirroringCapture -> "appops_package_capture"
-            anyActiveProjectMedia && runningPackages.isNotEmpty() -> "project_media_running"
-            overlayPackages.isNotEmpty() -> "mirroring_overlay"
-            asusOverlayPackages.isNotEmpty() -> "asus_overlay"
-            dynamicOverlayPackages.isNotEmpty() -> "dynamic_asus_overlay"
+            runningPackages.isNotEmpty() -> "project_media_running"
             mediaProjectionActive -> "media_projection_info"
-            mirroringPackageActiveOps -> "mirroring_package_active_ops"
             projectionActive -> "known_package_projection"
-            captureServiceMatch -> "capture_service"
-            mirroringAppOpsActive -> "mirroring_appops_combo"
-            foregroundServiceMatch -> "mirroring_foreground_service"
-            processMatch -> "mirroring_process"
-            serviceMatch -> "mirroring_service"
-            keywordProcessMatch -> "projection_process_keyword"
+            systemUiProjection -> "system_ui_projection"
             visibleProcessProjection -> "visible_process_projection"
+            appOpsCaptureActive -> "appops_package_capture"
+            captureServiceMatch -> "capture_service"
+            oemOverlayPackages.isNotEmpty() -> "mirroring_overlay"
+            asusOverlayPackages.isNotEmpty() -> "asus_overlay"
+            dynamicOverlayPackages.isNotEmpty() &&
+                dynamicOverlayPackages.any { MirroringPackageRegistry.supportsOverlayCaptureHeuristic(it) } ->
+                "dynamic_asus_overlay"
+            mirroringPackageActiveOps -> "mirroring_package_active_ops"
+            mirroringAppOpsActive -> "mirroring_appops_combo"
             else -> null
         }
 
@@ -578,21 +587,23 @@ object ScreenRecordingDetector {
      */
     private fun detectKnownMirroringViaActiveAppOps(
         context: Context,
-        overlayPackages: List<String>,
+        oemOverlayPackages: List<String>,
         mirroringApps: List<String>,
     ): Boolean {
-        if (overlayPackages.isNotEmpty()) return true
+        if (oemOverlayPackages.isNotEmpty()) return true
 
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false
 
+        val oemMirroringApps = mirroringApps.filter { packageName ->
+            MirroringPackageRegistry.supportsOverlayCaptureHeuristic(packageName)
+        }
         val foregroundPackages = findRunningPackagesForOp(context, AppOpsOps.START_FOREGROUND)
-            .filter { mirroringApps.contains(it) }
+            .filter { oemMirroringApps.contains(it) }
         if (foregroundPackages.isEmpty()) return false
 
         val projectMediaPackages = findRunningPackagesForOp(context, AppOpsOps.PROJECT_MEDIA).toSet()
         val overlayOpsPackages = findRunningPackagesForOp(context, AppOpsOps.SYSTEM_ALERT_WINDOW).toSet()
 
-        // Require an active capture-related AppOp alongside the foreground service, not just FGS+wakelock.
         return foregroundPackages.any { packageName ->
             packageName in projectMediaPackages || packageName in overlayOpsPackages
         }
@@ -654,7 +665,7 @@ object ScreenRecordingDetector {
             try {
                 val uid = packageManager.getApplicationInfo(packageName, 0).uid
                 if (isProjectMediaOpActive(appOps, uid, packageName)) return packageName
-                if (mirroringApps.contains(packageName) &&
+                if (MirroringPackageRegistry.supportsOverlayCaptureHeuristic(packageName) &&
                     isOpActiveViaInternal(appOps, AppOpsOps.SYSTEM_ALERT_WINDOW, uid, packageName)
                 ) {
                     return packageName
@@ -672,9 +683,6 @@ object ScreenRecordingDetector {
         "screencast",
         "screenrecord",
         "virtualdisplay",
-        "projection",
-        "mirror",
-        "cast",
     )
 
     private fun detectActiveCaptureServices(
@@ -694,7 +702,8 @@ object ScreenRecordingDetector {
                     packageName.contains("asus", ignoreCase = true) ||
                     packageName == "com.android.systemui"
                 relevantPackage &&
-                    CAPTURE_SERVICE_KEYWORDS.any { keyword -> className.contains(keyword) }
+                    CAPTURE_SERVICE_KEYWORDS.any { keyword -> className.contains(keyword) } &&
+                    CaptureConfirmation.isLiveCaptureForPackage(context, packageName)
             }
         } catch (_: SecurityException) {
             false
@@ -702,24 +711,7 @@ object ScreenRecordingDetector {
     }
 
     private fun detectActiveMediaProjectionPackage(context: Context): String? {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
-
-        val projectionManager =
-            context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as? MediaProjectionManager
-                ?: return null
-        val ownPackage = context.packageName
-
-        return try {
-            val info = projectionManager.javaClass.getMethod("getActiveProjectionInfo")
-                .invoke(projectionManager) ?: return null
-            val packageName = info.javaClass.getMethod("getPackageName").invoke(info) as? String
-                ?: return null
-            if (packageName == ownPackage) null else packageName
-        } catch (_: SecurityException) {
-            null
-        } catch (_: ReflectiveOperationException) {
-            null
-        }
+        return ActiveProjectionProbe.getActivePackage(context)
     }
 
     private fun extractActivePackagesFromPackageOpsList(
@@ -951,10 +943,8 @@ object ScreenRecordingDetector {
     }
 
     private fun updateRecordingState(active: Boolean, trigger: String?) {
-        if (recordingActive == active) return
+        if (recordingActive == active && (!active || lastDetectionTrigger == trigger)) return
         recordingActive = active
-        if (trigger != null) {
-            lastDetectionTrigger = trigger
-        }
+        lastDetectionTrigger = if (active) trigger else null
     }
 }

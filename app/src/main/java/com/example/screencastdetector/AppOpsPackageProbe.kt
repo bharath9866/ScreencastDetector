@@ -36,7 +36,9 @@ object AppOpsPackageProbe {
             }
         }
 
-        val activeEntry = probed.firstOrNull { entry -> isCaptureActive(entry.runningOps) }
+        val activeEntry = probed.firstOrNull { entry ->
+            isCaptureActive(context, entry.packageName, entry.runningOps)
+        }
         val state = DebugState(
             supported = isGetOpsForPackageSupported(context),
             probedPackages = probed,
@@ -59,10 +61,18 @@ object AppOpsPackageProbe {
     }
 
     /**
-     * GlideX marks PROJECT_MEDIA as ignore; while mirroring, overlay + foreground ops run together.
+     * PROJECT_MEDIA always indicates capture. Overlay + foreground is only treated as capture
+     * for OEM mirroring apps (GlideX) where PROJECT_MEDIA is often hidden from third-party apps.
      */
-    private fun isCaptureActive(runningOps: List<String>): Boolean {
-        if (AppOpsOps.PROJECT_MEDIA in runningOps) return true
+    private fun isCaptureActive(
+        context: Context,
+        packageName: String,
+        runningOps: List<String>,
+    ): Boolean {
+        if (AppOpsOps.PROJECT_MEDIA in runningOps) {
+            return CaptureConfirmation.isLiveCaptureForPackage(context, packageName)
+        }
+        if (!MirroringPackageRegistry.supportsOverlayCaptureHeuristic(packageName)) return false
         val hasOverlay = AppOpsOps.SYSTEM_ALERT_WINDOW in runningOps
         val hasForeground = AppOpsOps.START_FOREGROUND in runningOps
         return hasOverlay && hasForeground
