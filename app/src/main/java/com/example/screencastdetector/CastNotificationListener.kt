@@ -57,10 +57,6 @@ class CastNotificationListener : NotificationListenerService() {
             )
         }
 
-        fun isMirroringActive(context: Context): Boolean {
-            return getDebugState(context).mirroringActive
-        }
-
         fun addChangeListener(listener: () -> Unit): () -> Unit {
             changeListeners.add(listener)
             return { changeListeners.remove(listener) }

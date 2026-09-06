@@ -21,24 +21,14 @@ object HiddenDisplayDetector {
         val hiddenVirtualDisplayActive: Boolean,
     )
 
-    @Volatile
-    private var lastHiddenVirtualDisplayActive = false
-
-    fun refreshState(context: Context) {
-        lastHiddenVirtualDisplayActive = probe(context).hiddenVirtualDisplayActive
-    }
-
-    fun isActive(): Boolean = lastHiddenVirtualDisplayActive
-
-    fun getDebugState(context: Context): DebugState = probe(context)
-
-    private fun probe(context: Context): DebugState {
+    fun probe(context: Context): DebugState {
         return try {
             val global = getDisplayManagerGlobal()
-            val bruteForce = if (global != null) probeViaDisplayManagerGlobal(global, context) else null
-            if (bruteForce != null) return bruteForce
+            val fromGlobal = global?.let { probeViaDisplayManagerGlobal(it, context) }
+            if (fromGlobal != null) return fromGlobal
 
-            val manager = context.getSystemService(Context.DISPLAY_SERVICE) as android.hardware.display.DisplayManager
+            val manager =
+                context.getSystemService(Context.DISPLAY_SERVICE) as android.hardware.display.DisplayManager
             probeViaDisplayManager(manager, context)
         } catch (_: Exception) {
             unsupported()
@@ -63,26 +53,21 @@ object HiddenDisplayDetector {
         for (category in allCategories) {
             try {
                 for (display in manager.getDisplays(category)) {
-                    collectHiddenDisplay(display, ownPackage, ids, names, owners)?.let { hasVirtual = true }
+                    collectHiddenDisplay(display, ownPackage, ids, names, owners)?.let {
+                        hasVirtual = true
+                    }
                 }
             } catch (_: Exception) {
                 // Category not supported on this build.
             }
         }
 
-        // GlideX private displays are omitted from getDisplays() but may still be reachable by ID.
         for (displayId in 0..15) {
             val display = manager.getDisplay(displayId) ?: continue
             collectHiddenDisplay(display, ownPackage, ids, names, owners)?.let { hasVirtual = true }
         }
 
-        return DebugState(
-            supported = true,
-            globalDisplayIds = ids,
-            virtualDisplayNames = names,
-            virtualDisplayOwners = owners.distinct(),
-            hiddenVirtualDisplayActive = hasVirtual,
-        ).also { logProbe(it) }
+        return buildState(ids, names, owners, hasVirtual)
     }
 
     private fun probeViaDisplayManagerGlobal(global: Any, context: Context): DebugState? {
@@ -115,9 +100,18 @@ object HiddenDisplayDetector {
             ownerPackage?.let { owners.add(it) }
         }
 
+        return buildState(ids.toList(), names, owners, hasVirtual)
+    }
+
+    private fun buildState(
+        ids: List<Int>,
+        names: List<String>,
+        owners: List<String>,
+        hasVirtual: Boolean,
+    ): DebugState {
         return DebugState(
             supported = true,
-            globalDisplayIds = ids.toList(),
+            globalDisplayIds = ids,
             virtualDisplayNames = names,
             virtualDisplayOwners = owners.distinct(),
             hiddenVirtualDisplayActive = hasVirtual,
@@ -131,12 +125,6 @@ object HiddenDisplayDetector {
                 "names=${state.virtualDisplayNames} owners=${state.virtualDisplayOwners} " +
                 "active=${state.hiddenVirtualDisplayActive}",
         )
-    }
-
-    private fun parseOwnerFromDisplayName(name: String?): String? {
-        if (name == null) return null
-        if (name.contains("GlideX", ignoreCase = true)) return "com.asus.glidex"
-        return null
     }
 
     private fun unsupported(): DebugState {
@@ -157,8 +145,9 @@ object HiddenDisplayDetector {
         owners: MutableList<String>,
     ): Boolean? {
         ids.add(display.displayId)
-        if (display.displayId == Display.DEFAULT_DISPLAY) return null
-        if (display.state == Display.STATE_OFF) return null
+        if (display.displayId == Display.DEFAULT_DISPLAY || display.state == Display.STATE_OFF) {
+            return null
+        }
 
         val name = display.name?.toString()
         val owner = parseOwnerFromDisplayName(name) ?: parseOwnerFromUniqueId(display.toString())
@@ -169,14 +158,18 @@ object HiddenDisplayDetector {
         return true
     }
 
+    private fun parseOwnerFromDisplayName(name: String?): String? {
+        if (name?.contains("GlideX", ignoreCase = true) == true) return "com.asus.glidex"
+        return null
+    }
+
     private fun getDisplayManagerGlobal(): Any? {
         val clazz = Class.forName("android.hardware.display.DisplayManagerGlobal")
         return clazz.getMethod("getInstance").invoke(null)
     }
 
     private fun getDisplayIds(global: Any): IntArray {
-        val method = global.javaClass.getMethod("getDisplayIds")
-        return method.invoke(global) as IntArray
+        return global.javaClass.getMethod("getDisplayIds").invoke(global) as IntArray
     }
 
     private fun getDisplayInfo(global: Any, displayId: Int): Any? {
@@ -190,8 +183,7 @@ object HiddenDisplayDetector {
 
     private fun getDisplayInfoInt(info: Any, fieldName: String): Int {
         return try {
-            val field = info.javaClass.getField(fieldName)
-            field.getInt(info)
+            info.javaClass.getField(fieldName).getInt(info)
         } catch (_: ReflectiveOperationException) {
             -1
         }
@@ -199,8 +191,7 @@ object HiddenDisplayDetector {
 
     private fun getDisplayInfoString(info: Any, fieldName: String): String? {
         return try {
-            val field = info.javaClass.getField(fieldName)
-            field.get(info) as? String
+            info.javaClass.getField(fieldName).get(info) as? String
         } catch (_: ReflectiveOperationException) {
             null
         }
@@ -209,7 +200,6 @@ object HiddenDisplayDetector {
     /** e.g. virtual:com.asus.glidex,10154,GlideXVirtualDisplay,0 */
     private fun parseOwnerFromUniqueId(uniqueId: String?): String? {
         if (uniqueId == null || !uniqueId.startsWith("virtual:")) return null
-        val parts = uniqueId.split(',')
-        return parts.getOrNull(0)?.removePrefix("virtual:")
+        return uniqueId.split(',').getOrNull(0)?.removePrefix("virtual:")
     }
 }

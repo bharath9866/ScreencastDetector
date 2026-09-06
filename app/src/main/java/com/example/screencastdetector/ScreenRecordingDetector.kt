@@ -8,7 +8,6 @@ import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.util.Log
 import android.view.WindowManager
-import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executor
 import java.util.function.Consumer
 
@@ -99,7 +98,6 @@ object ScreenRecordingDetector {
     @Volatile
     private var lastDiscoveredMirroringPackages: List<String> = emptyList()
 
-    private val changeListeners = CopyOnWriteArrayList<() -> Unit>()
     private var monitoringActivity: Activity? = null
     private var monitoringStarted = false
     private var screenRecordingCallback: Consumer<Int>? = null
@@ -108,10 +106,6 @@ object ScreenRecordingDetector {
     private var pollRunnable: Runnable? = null
 
     private const val POLL_INTERVAL_MS = 1_000L
-    private const val OP_PROJECT_MEDIA = "android:project_media"
-    private const val OP_SYSTEM_ALERT_WINDOW = "android:system_alert_window"
-    private const val OP_START_FOREGROUND = "android:start_foreground"
-    private const val OP_WAKE_LOCK = "android:wake_lock"
 
     @Volatile
     private var lastRunningProjectMediaPackages: List<String> = emptyList()
@@ -142,12 +136,6 @@ object ScreenRecordingDetector {
     private var internalAppOpsActiveSupported: Boolean? = null
     private var packagesForOpsSupported: Boolean? = null
     private var projectMediaOpCode: Int? = null
-
-    fun isActive(): Boolean = isScreenRecordingActive()
-
-    fun isScreenRecordingActive(): Boolean = recordingActive
-
-    fun isMonitoring(): Boolean = monitoringStarted
 
     fun getDebugState(context: Context): DebugState {
         val processes =
@@ -181,11 +169,6 @@ object ScreenRecordingDetector {
         refreshHeuristicState(context)
     }
 
-    fun addChangeListener(listener: () -> Unit): () -> Unit {
-        changeListeners.add(listener)
-        return { changeListeners.remove(listener) }
-    }
-
     fun startMonitoring(activity: Activity) {
         if (monitoringStarted && monitoringActivity == activity) return
         stopMonitoringInternal()
@@ -211,14 +194,10 @@ object ScreenRecordingDetector {
         stopApi35Callback()
         monitoringActivity = null
 
-        val wasActive = recordingActive
         recordingActive = false
         lastHeuristicMatch = false
         lastDetectionTrigger = null
         lastHeuristicBreakdown = emptyBreakdown()
-        if (wasActive) {
-            notifyChangeListeners()
-        }
     }
 
     private fun startApi35Callback(activity: Activity) {
@@ -229,7 +208,7 @@ object ScreenRecordingDetector {
             val callback = Consumer<Int> { state ->
                 val visible = state == visibleRecordingState()
                 if (visible) {
-                    updateRecordingState(appContext, active = true, trigger = "api35_callback")
+                    updateRecordingState(active = true, trigger = "api35_callback")
                 } else {
                     refreshHeuristicState(appContext)
                 }
@@ -365,13 +344,13 @@ object ScreenRecordingDetector {
 
         val appOps = context.getSystemService(AppOpsManager::class.java) ?: return
         val watchedOps = arrayOf(
-            OP_PROJECT_MEDIA,
-            OP_SYSTEM_ALERT_WINDOW,
-            OP_START_FOREGROUND,
+            AppOpsOps.PROJECT_MEDIA,
+            AppOpsOps.SYSTEM_ALERT_WINDOW,
+            AppOpsOps.START_FOREGROUND,
         )
-        val watcher = AppOpsManager.OnOpActiveChangedListener { op, _, packageName, active ->
+        val watcher = AppOpsManager.OnOpActiveChangedListener { op, _, packageName, _ ->
             if (packageName == context.packageName) return@OnOpActiveChangedListener
-            if (op == OP_PROJECT_MEDIA) {
+            if (op == AppOpsOps.PROJECT_MEDIA) {
                 refreshHeuristicState(context)
                 return@OnOpActiveChangedListener
             }
@@ -436,10 +415,10 @@ object ScreenRecordingDetector {
         val mirroringApps = MirroringPackageRegistry.mirroringAppPackages(context)
         lastDiscoveredMirroringPackages = MirroringPackageRegistry.discoverMirroringPackages(context)
 
-        val runningPackages = findRunningPackagesForOp(context, OP_PROJECT_MEDIA)
+        val runningPackages = findRunningPackagesForOp(context, AppOpsOps.PROJECT_MEDIA)
         lastRunningProjectMediaPackages = runningPackages
 
-        val allOverlayPackages = findRunningPackagesForOp(context, OP_SYSTEM_ALERT_WINDOW)
+        val allOverlayPackages = findRunningPackagesForOp(context, AppOpsOps.SYSTEM_ALERT_WINDOW)
         val overlayPackages = allOverlayPackages.filter { mirroringApps.contains(it) }
         lastRunningMirroringOverlayPackages = overlayPackages
 
@@ -534,7 +513,7 @@ object ScreenRecordingDetector {
                 Log.i(LOG_TAG, "Screen sharing OFF")
             }
         }
-        updateRecordingState(context, active, trigger)
+        updateRecordingState(active, trigger)
     }
 
     private fun findRunningPackagesForOp(context: Context, opName: String): List<String> {
@@ -606,12 +585,12 @@ object ScreenRecordingDetector {
 
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false
 
-        val foregroundPackages = findRunningPackagesForOp(context, OP_START_FOREGROUND)
+        val foregroundPackages = findRunningPackagesForOp(context, AppOpsOps.START_FOREGROUND)
             .filter { mirroringApps.contains(it) }
         if (foregroundPackages.isEmpty()) return false
 
-        val projectMediaPackages = findRunningPackagesForOp(context, OP_PROJECT_MEDIA).toSet()
-        val overlayOpsPackages = findRunningPackagesForOp(context, OP_SYSTEM_ALERT_WINDOW).toSet()
+        val projectMediaPackages = findRunningPackagesForOp(context, AppOpsOps.PROJECT_MEDIA).toSet()
+        val overlayOpsPackages = findRunningPackagesForOp(context, AppOpsOps.SYSTEM_ALERT_WINDOW).toSet()
 
         // Require an active capture-related AppOp alongside the foreground service, not just FGS+wakelock.
         return foregroundPackages.any { packageName ->
@@ -676,7 +655,7 @@ object ScreenRecordingDetector {
                 val uid = packageManager.getApplicationInfo(packageName, 0).uid
                 if (isProjectMediaOpActive(appOps, uid, packageName)) return packageName
                 if (mirroringApps.contains(packageName) &&
-                    isOpActiveViaInternal(appOps, OP_SYSTEM_ALERT_WINDOW, uid, packageName)
+                    isOpActiveViaInternal(appOps, AppOpsOps.SYSTEM_ALERT_WINDOW, uid, packageName)
                 ) {
                     return packageName
                 }
@@ -887,7 +866,7 @@ object ScreenRecordingDetector {
                     Int::class.javaPrimitiveType,
                     String::class.java,
                 )
-                method.invoke(appOps, OP_PROJECT_MEDIA, uid, packageName) as Boolean
+                method.invoke(appOps, AppOpsOps.PROJECT_MEDIA, uid, packageName) as Boolean
             } catch (_: ReflectiveOperationException) {
                 false
             }
@@ -927,15 +906,11 @@ object ScreenRecordingDetector {
         uid: Int,
         packageName: String,
     ): Boolean {
-        return isOpActiveViaInternal(appOps, OP_PROJECT_MEDIA, uid, packageName)
-    }
-
-    private fun resolveProjectMediaOpCode(appOps: AppOpsManager): Int {
-        return resolveAppOpsOpCode(appOps, OP_PROJECT_MEDIA)
+        return isOpActiveViaInternal(appOps, AppOpsOps.PROJECT_MEDIA, uid, packageName)
     }
 
     private fun resolveAppOpsOpCode(appOps: AppOpsManager, opName: String): Int {
-        if (opName == OP_PROJECT_MEDIA) {
+        if (opName == AppOpsOps.PROJECT_MEDIA) {
             projectMediaOpCode?.let { return it }
         }
         val code = try {
@@ -943,14 +918,14 @@ object ScreenRecordingDetector {
                 .invoke(appOps, opName) as Int
         } catch (_: ReflectiveOperationException) {
             when (opName) {
-                OP_PROJECT_MEDIA -> 46
-                OP_SYSTEM_ALERT_WINDOW -> 24
-                OP_START_FOREGROUND -> 76
-                OP_WAKE_LOCK -> 40
+                AppOpsOps.PROJECT_MEDIA -> 46
+                AppOpsOps.SYSTEM_ALERT_WINDOW -> 24
+                AppOpsOps.START_FOREGROUND -> 76
+                AppOpsOps.WAKE_LOCK -> 40
                 else -> -1
             }
         }
-        if (opName == OP_PROJECT_MEDIA) {
+        if (opName == AppOpsOps.PROJECT_MEDIA) {
             projectMediaOpCode = code
         }
         return code
@@ -975,18 +950,11 @@ object ScreenRecordingDetector {
         )
     }
 
-    private fun updateRecordingState(context: Context, active: Boolean, trigger: String?) {
+    private fun updateRecordingState(active: Boolean, trigger: String?) {
         if (recordingActive == active) return
         recordingActive = active
         if (trigger != null) {
             lastDetectionTrigger = trigger
-        }
-        notifyChangeListeners()
-    }
-
-    private fun notifyChangeListeners() {
-        for (listener in changeListeners) {
-            listener.invoke()
         }
     }
 }

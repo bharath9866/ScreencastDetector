@@ -75,24 +75,38 @@ adb shell dumpsys appops | sed -n '/Package com.asus.glidex/,/^  Package /p'
 | Layer | Class | Signals |
 |-------|-------|---------|
 | External / virtual display | `DisplayCastDetector` | HDMI, WiFi display, presentation displays |
-| System cast settings | `SystemCastDetector` | WiFi display status, Global settings keys |
-| MediaRouter cast route | `MediaRouterCastDetector` | Non-default remote live-video route |
 | PC mirror / screen capture | `ScreenRecordingDetector` | AppOps, MediaProjection reflection, dynamic ASUS package discovery, system UI projection, foreground services |
+| GlideX notification | `CastNotificationListener` | "Stop mirroring" notification (requires Notification Access) |
+| Hidden virtual display | `HiddenDisplayDetector` | Private virtual displays via DisplayManagerGlobal |
+| MediaProjection binder | `MediaProjectionServiceProbe` | Active projection session via system service |
+| MediaRouter cast route | `MediaRouterCastDetector` | Non-default remote live-video route |
 | Package discovery | `MirroringPackageRegistry` | Static list + installed ASUS/glide/cast packages |
 
+Shared helpers: `AppOpsOps`, `WifiDisplayHelper`, `DebugReportFormatter`.
+
 Combined result is exposed via `ScreencastProbe`.
+
+## Implementation flow
+
+See [IMPLEMENTATION_FLOW.md](./IMPLEMENTATION_FLOW.md) for architecture diagrams, probe lifecycle, per-detector logic, and the GlideX-on-API-29 detection path.
 
 ## Project structure
 
 ```
 app/src/main/java/com/example/screencastdetector/
-  MainActivity.kt           — debug UI with 3s auto-refresh
-  ScreencastProbe.kt        — facade combining all detectors
-  MirroringPackageRegistry.kt — static + dynamic mirroring package discovery
-  MediaRouterCastDetector.kt — MediaRouter cast route probe
-  SystemCastDetector.kt     — WiFi display / settings cast probe
-  ScreenRecordingDetector.kt — AppOps, MediaProjection, OEM heuristics
-  DisplayCastDetector.kt    — ported from OneApp ProctoringCastingDetector
+  MainActivity.kt              — debug UI with 1s auto-refresh
+  ScreencastProbe.kt           — facade combining all detectors
+  DebugReportFormatter.kt      — debug panel text builder
+  CastNotificationListener.kt  — GlideX notification listener service
+  HiddenDisplayDetector.kt     — private virtual display probe
+  MediaProjectionServiceProbe.kt — IMediaProjectionManager binder probe
+  DisplayCastDetector.kt       — external / virtual / presentation displays
+  ScreenRecordingDetector.kt   — AppOps, services, processes, API 35 callback
+  AppOpsPackageProbe.kt        — per-package AppOps probe
+  AppOpsOps.kt                 — shared AppOps constant names
+  WifiDisplayHelper.kt         — shared WiFi display status check
+  MirroringPackageRegistry.kt  — static + dynamic mirroring package list
+  MediaRouterCastDetector.kt   — MediaRouter remote route probe
 ```
 
 ## Next steps after validation

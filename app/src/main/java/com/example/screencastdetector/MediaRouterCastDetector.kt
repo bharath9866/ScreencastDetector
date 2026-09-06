@@ -17,25 +17,13 @@ object MediaRouterCastDetector {
         val castRouteActive: Boolean,
     )
 
-    @Volatile
-    private var lastCastRouteActive = false
-
-    fun refreshState(context: Context) {
-        lastCastRouteActive = probe(context).castRouteActive
-    }
-
-    fun isActive(): Boolean = lastCastRouteActive
-
-    fun getDebugState(context: Context): DebugState = probe(context)
-
-    private fun probe(context: Context): DebugState {
+    fun probe(context: Context): DebugState {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.JELLY_BEAN) {
             return inactiveState(supported = false)
         }
 
         return try {
-            val router =
-                context.getSystemService(Context.MEDIA_ROUTER_SERVICE) as MediaRouter
+            val router = context.getSystemService(Context.MEDIA_ROUTER_SERVICE) as MediaRouter
             val routes = invokeGetRoutes(router)
             val selectedRoute = router.getSelectedRoute(MediaRouter.ROUTE_TYPE_LIVE_VIDEO)
             val isDefault = invokeRouteIsDefault(selectedRoute)
@@ -74,24 +62,20 @@ object MediaRouterCastDetector {
 
     @Suppress("UNCHECKED_CAST")
     private fun invokeGetRoutes(router: MediaRouter): List<MediaRouter.RouteInfo> {
-        val method = MediaRouter::class.java.getMethod("getRoutes")
-        return method.invoke(router) as List<MediaRouter.RouteInfo>
+        return MediaRouter::class.java.getMethod("getRoutes").invoke(router) as List<MediaRouter.RouteInfo>
     }
 
     private fun invokeRouteIsDefault(route: MediaRouter.RouteInfo): Boolean {
-        val method = MediaRouter.RouteInfo::class.java.getMethod("isDefault")
-        return method.invoke(route) as Boolean
+        return MediaRouter.RouteInfo::class.java.getMethod("isDefault").invoke(route) as Boolean
     }
 
     private fun invokeRoutePlaybackType(route: MediaRouter.RouteInfo): Int {
-        val method = MediaRouter.RouteInfo::class.java.getMethod("getPlaybackType")
-        return method.invoke(route) as Int
+        return MediaRouter.RouteInfo::class.java.getMethod("getPlaybackType").invoke(route) as Int
     }
 
     private fun invokeRouteName(route: MediaRouter.RouteInfo): String? {
         return try {
-            val method = MediaRouter.RouteInfo::class.java.getMethod("getName")
-            method.invoke(route)?.toString()
+            MediaRouter.RouteInfo::class.java.getMethod("getName").invoke(route)?.toString()
         } catch (_: ReflectiveOperationException) {
             null
         }

@@ -13,11 +13,6 @@ import android.util.Log
 object AppOpsPackageProbe {
     private const val LOG_TAG = "ScreencastDetector"
 
-    private const val OP_PROJECT_MEDIA = "android:project_media"
-    private const val OP_SYSTEM_ALERT_WINDOW = "android:system_alert_window"
-    private const val OP_START_FOREGROUND = "android:start_foreground"
-    private const val OP_WAKE_LOCK = "android:wake_lock"
-
     data class PackageOpsState(
         val packageName: String,
         val runningOps: List<String>,
@@ -67,9 +62,9 @@ object AppOpsPackageProbe {
      * GlideX marks PROJECT_MEDIA as ignore; while mirroring, overlay + foreground ops run together.
      */
     private fun isCaptureActive(runningOps: List<String>): Boolean {
-        if (OP_PROJECT_MEDIA in runningOps) return true
-        val hasOverlay = OP_SYSTEM_ALERT_WINDOW in runningOps
-        val hasForeground = OP_START_FOREGROUND in runningOps
+        if (AppOpsOps.PROJECT_MEDIA in runningOps) return true
+        val hasOverlay = AppOpsOps.SYSTEM_ALERT_WINDOW in runningOps
+        val hasForeground = AppOpsOps.START_FOREGROUND in runningOps
         return hasOverlay && hasForeground
     }
 
@@ -80,10 +75,10 @@ object AppOpsPackageProbe {
             val appOps = context.getSystemService(AppOpsManager::class.java) ?: return null
             val uid = context.packageManager.getApplicationInfo(packageName, 0).uid
             val opNames = arrayOf(
-                OP_PROJECT_MEDIA,
-                OP_SYSTEM_ALERT_WINDOW,
-                OP_START_FOREGROUND,
-                OP_WAKE_LOCK,
+                AppOpsOps.PROJECT_MEDIA,
+                AppOpsOps.SYSTEM_ALERT_WINDOW,
+                AppOpsOps.START_FOREGROUND,
+                AppOpsOps.WAKE_LOCK,
             )
             val entries = getOpsForPackage(appOps, uid, packageName, opNames) ?: return emptyList()
             if (packageName == "com.asus.glidex") {

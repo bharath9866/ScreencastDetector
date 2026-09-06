@@ -30,7 +30,6 @@ local.properties
 
 # Android Studio / IntelliJ
 *.iml
-!DSAProject/DSAProject.iml
 .idea/
 .idea/*
 !.idea/codeStyles/

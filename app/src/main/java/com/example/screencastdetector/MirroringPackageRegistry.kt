@@ -50,8 +50,6 @@ object MirroringPackageRegistry {
     @Volatile
     private var cachedDiscoveredPackages: List<String>? = null
 
-    fun staticMirroringPackages(): List<String> = STATIC_MIRRORING_PACKAGES
-
     fun projectionHostPackages(): List<String> = PROJECTION_HOST_PACKAGES
 
     fun mirroringAppPackages(context: Context): List<String> {
